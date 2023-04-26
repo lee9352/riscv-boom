@@ -27,9 +27,8 @@ import scala.math.ceil
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.chiselName
 
-import freechips.rocketchip.config.Parameters
+import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.util.Str
 
 import boom.common._
@@ -208,7 +207,6 @@ class DebugRobSignals(implicit p: Parameters) extends BoomBundle
  * @param numWakeupPorts number of wakeup ports to the ROB
  * @param numFpuPorts number of FPU units that will write back fflags
  */
-@chiselName
 class Rob(
   val numWakeupPorts: Int,
   val numFpuPorts: Int

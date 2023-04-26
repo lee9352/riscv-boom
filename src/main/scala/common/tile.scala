@@ -10,7 +10,7 @@ import chisel3.util.{RRArbiter, Queue}
 
 import scala.collection.mutable.{ListBuffer}
 
-import freechips.rocketchip.config._
+import org.chipsalliance.cde.config._
 import freechips.rocketchip.subsystem._
 import freechips.rocketchip.devices.tilelink._
 import freechips.rocketchip.diplomacy._
@@ -21,8 +21,6 @@ import freechips.rocketchip.tilelink._
 import freechips.rocketchip.interrupts._
 import freechips.rocketchip.util._
 import freechips.rocketchip.tile._
-
-import testchipip.{ExtendedTracedInstruction, WithExtendedTraceport}
 
 import boom.exu._
 import boom.ifu._
@@ -49,7 +47,6 @@ case class BoomTileParams(
   icache: Option[ICacheParams] = Some(ICacheParams()),
   dcache: Option[DCacheParams] = Some(DCacheParams()),
   btb: Option[BTBParams] = Some(BTBParams()),
-  trace: Boolean = false,
   name: Option[String] = Some("boom_tile"),
   hartId: Int = 0
 ) extends InstantiableTileParams[BoomTile]
@@ -77,7 +74,6 @@ class BoomTile private(
   extends BaseTile(boomParams, crossing, lookup, q)
   with SinksExternalInterrupts
   with SourcesExternalNotifications
-  with WithExtendedTraceport
 {
 
   // Private constructor ensures altered LazyModule.p is used implicitly
@@ -85,7 +81,7 @@ class BoomTile private(
     this(params, crossing.crossingType, lookup, p)
 
   val intOutwardNode = IntIdentityNode()
-  val masterNode = visibilityNode
+  val masterNode = TLIdentityNode()
   val slaveNode = TLIdentityNode()
 
   val tile_master_blocker =
@@ -133,13 +129,15 @@ class BoomTile private(
   // DCache
   lazy val dcache: BoomNonBlockingDCache = LazyModule(new BoomNonBlockingDCache(staticIdForMetadataUseOnly))
   val dCacheTap = TLIdentityNode()
-  tlMasterXbar.node := dCacheTap := dcache.node
+  tlMasterXbar.node := dCacheTap := TLWidthWidget(tileParams.dcache.get.rowBits/8) := visibilityNode := dcache.node
 
 
   // Frontend/ICache
   val frontend = LazyModule(new BoomFrontend(tileParams.icache.get, staticIdForMetadataUseOnly))
   frontend.resetVectorSinkNode := resetVectorNexusNode
-  tlMasterXbar.node := frontend.masterNode
+  tlMasterXbar.node := TLWidthWidget(tileParams.icache.get.rowBits/8) := frontend.masterNode
+
+  require(tileParams.dcache.get.rowBits == tileParams.icache.get.rowBits)
 
   // ROCC
   val roccs = p(BuildRoCC).map(_(p))
@@ -156,7 +154,7 @@ class BoomTileModuleImp(outer: BoomTile) extends BaseTileModuleImp(outer){
 
   Annotated.params(this, outer.boomParams)
 
-  val core = Module(new BoomCore(outer.boomParams.trace)(outer.p))
+  val core = Module(new BoomCore()(outer.p))
   val lsu  = Module(new LSU()(outer.p, outer.dcache.module.edge))
 
   val ptwPorts         = ListBuffer(lsu.io.ptw, outer.frontend.module.io.ptw, core.io.ptw_tlb)
@@ -168,8 +166,7 @@ class BoomTileModuleImp(outer: BoomTile) extends BaseTileModuleImp(outer){
   outer.decodeCoreInterrupts(core.io.interrupts) // Decode the interrupt vector
 
   // Pass through various external constants and reports
-  outer.extTraceSourceNode.bundle <> core.io.trace
-  outer.traceSourceNode.bundle <> DontCare
+  outer.traceSourceNode.bundle <> core.io.trace
   outer.bpwatchSourceNode.bundle <> DontCare // core.io.bpwatch
   core.io.hartid := outer.hartIdSinkNode.bundle
 
@@ -179,12 +176,6 @@ class BoomTileModuleImp(outer: BoomTile) extends BaseTileModuleImp(outer){
 
   //fpuOpt foreach { fpu => core.io.fpu <> fpu.io } RocketFpu - not needed in boom
   core.io.rocc := DontCare
-  
-  // PTW
-  val ptw  = Module(new PTW(ptwPorts.length)(outer.dcache.node.edges.out(0), outer.p))
-  core.io.ptw <> ptw.io.dpath
-  ptw.io.requestor <> ptwPorts
-  hellaCachePorts += ptw.io.mem
 
   // RoCC
   if (outer.roccs.size > 0) {
@@ -233,9 +224,15 @@ class BoomTileModuleImp(outer: BoomTile) extends BaseTileModuleImp(outer){
     core.io.rocc.interrupt := outer.roccs.map(_.module.io.interrupt).reduce(_||_)
   }
 
+  // PTW
+  val ptw  = Module(new PTW(ptwPorts.length)(outer.dcache.node.edges.out(0), outer.p))
+  core.io.ptw <> ptw.io.dpath
+  ptw.io.requestor <> ptwPorts.toSeq
+  ptw.io.mem +=: hellaCachePorts
+
    // LSU IO
   val hellaCacheArb = Module(new HellaCacheArbiter(hellaCachePorts.length)(outer.p))
-  hellaCacheArb.io.requestor <> hellaCachePorts
+  hellaCacheArb.io.requestor <> hellaCachePorts.toSeq
   lsu.io.hellacache <> hellaCacheArb.io.mem
   outer.dcache.module.io.lsu <> lsu.io.dmem
 

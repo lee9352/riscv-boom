@@ -46,7 +46,7 @@ package boom.lsu
 import chisel3._
 import chisel3.util._
 
-import freechips.rocketchip.config.Parameters
+import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.rocket
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.util.Str
@@ -1207,7 +1207,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
     when (will_fire_store_commit(0) || !can_fire_store_commit(0)) {
       store_blocked_counter := 0.U
     } .elsewhen (can_fire_store_commit(0) && !will_fire_store_commit(0)) {
-      store_blocked_counter := Mux(store_blocked_counter === 15.U, store_blocked_counter + 1.U, 15.U)
+      store_blocked_counter := Mux(store_blocked_counter === 15.U, 15.U, store_blocked_counter + 1.U)
     }
     when (store_blocked_counter === 15.U) {
       block_load_wakeup := true.B
